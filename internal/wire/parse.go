@@ -113,6 +113,9 @@ type ProviderSet struct {
 	// srcMap maps from provided type to a *providerSetSrc capturing the
 	// Provider, Binding, Value, or Import that provided the type.
 	srcMap *typeutil.Map
+
+	// providerDependantCounts maps from provided type to an int which counts how many other providers depend on this type
+	providerDependantCounts *typeutil.Map
 }
 
 // Outputs returns a new slice containing the set of possible types the
@@ -141,6 +144,11 @@ type IfaceBinding struct {
 
 	// Pos is the position where the binding was declared.
 	Pos token.Pos
+}
+
+// An AsyncFunc declares that the type provided by func should be resolved asynchronously using a goroutine.
+type AsyncFunc struct {
+	Provider *Provider
 }
 
 // Provider records the signature of a provider. A provider is a
@@ -177,6 +185,9 @@ type Provider struct {
 	// HasErr reports whether the provider function can return an error.
 	// (Always false for structs.)
 	HasErr bool
+
+	// Async is true if this provider is an AsyncFunc
+	Async bool
 }
 
 // ProviderInput describes an incoming edge in the provider graph.
@@ -519,8 +530,8 @@ func (oc *objectCache) varDecl(obj *types.Var) *ast.ValueSpec {
 	return nil
 }
 
-// processExpr converts an expression into a Wire structure. It may return a
-// *Provider, an *IfaceBinding, a *ProviderSet, a *Value or a []*Field.
+// processExpr converts an expression into a Wire structure. It may return an
+// *AsyncFunc, a *Provider, an *IfaceBinding, a *ProviderSet, a *Value or a []*Field.
 func (oc *objectCache) processExpr(info *types.Info, pkgPath string, expr ast.Expr, varName string) (interface{}, []error) {
 	exprPos := oc.fset.Position(expr.Pos())
 	expr = astutil.Unparen(expr)
@@ -543,6 +554,9 @@ func (oc *objectCache) processExpr(info *types.Info, pkgPath string, expr ast.Ex
 			return nil, []error{notePosition(exprPos, errors.New("unknown pattern"))}
 		}
 		switch fnObj.Name() {
+		case "AsyncFunc":
+			pset, errs := processAsyncFunc(oc.fset, info, call)
+			return pset, notePositionAll(exprPos, errs)
 		case "NewSet":
 			pset, errs := oc.processNewSet(info, pkgPath, call, nil, varName)
 			return pset, notePositionAll(exprPos, errs)
@@ -607,6 +621,8 @@ func (oc *objectCache) processNewSet(info *types.Info, pkgPath string, call *ast
 			continue
 		}
 		switch item := item.(type) {
+		case *AsyncFunc:
+			pset.Providers = append(pset.Providers, item.Provider)
 		case *Provider:
 			pset.Providers = append(pset.Providers, item)
 		case *ProviderSet:
@@ -632,6 +648,8 @@ func (oc *objectCache) processNewSet(info *types.Info, pkgPath string, call *ast
 	if errs := verifyAcyclic(pset.providerMap, oc.hasher); len(errs) > 0 {
 		return nil, errs
 	}
+	pset.providerDependantCounts = buildProviderDependantCounts(pset.providerMap)
+	updateAsyncProviders(pset.providerMap)
 	return pset, nil
 }
 
@@ -768,7 +786,7 @@ func processStructLiteralProvider(fset *token.FileSet, typeName *types.TypeName)
 
 	pos := typeName.Pos()
 	fmt.Fprintf(os.Stderr,
-		"Warning: %v, see https://godoc.org/github.com/google/wire#Struct for more information.\n",
+		"Warning: %v, see https://godoc.org/github.com/deliveroo/wire#Struct for more information.\n",
 		notePosition(fset.Position(pos),
 			fmt.Errorf("using struct literal to inject %s is deprecated and will be removed in the next release; use wire.Struct instead",
 				typeName.Type())))
@@ -971,6 +989,26 @@ func processValue(fset *token.FileSet, info *types.Info, call *ast.CallExpr) (*V
 	}, nil
 }
 
+// processAsyncFunc creates an AsyncFunc from a wire.AsyncFunc call.
+func processAsyncFunc(fset *token.FileSet, info *types.Info, call *ast.CallExpr) (*Provider, []error) {
+	if len(call.Args) != 1 {
+		return nil, []error{notePosition(fset.Position(call.Pos()), errors.New("call to AsyncFunc takes exactly one argument"))}
+	}
+	obj := qualifiedIdentObject(info, call.Args[0])
+
+	fun, ok := obj.(*types.Func)
+	if !ok {
+		return nil, []error{notePosition(fset.Position(call.Pos()), errors.New("argument to AsyncFunc is not a function"))}
+	}
+
+	p, errs := processFuncProvider(fset, fun)
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	p.Async = true
+	return p, nil
+}
+
 // processInterfaceValue creates a value from a wire.InterfaceValue call.
 func processInterfaceValue(fset *token.FileSet, info *types.Info, call *ast.CallExpr) (*Value, error) {
 	// Assumes that call.Fun is wire.InterfaceValue.
@@ -1139,7 +1177,7 @@ func isWireImport(path string) bool {
 	if i := strings.LastIndex(path, vendorPart); i != -1 && (i == 0 || path[i-1] == '/') {
 		path = path[i+len(vendorPart):]
 	}
-	return path == "github.com/google/wire"
+	return path == "github.com/deliveroo/wire"
 }
 
 func isProviderSetType(t types.Type) bool {
@@ -1173,9 +1211,9 @@ func (pt ProvidedType) IsNil() bool {
 //
 //   - For a function provider, this is the first return value type.
 //   - For a struct provider, this is either the struct type or the pointer type
-// 	   whose element type is the struct type.
-// 	 - For a value, this is the type of the expression.
-// 	 - For an argument, this is the type of the argument.
+//     whose element type is the struct type.
+//   - For a value, this is the type of the expression.
+//   - For an argument, this is the type of the argument.
 func (pt ProvidedType) Type() types.Type {
 	return pt.t
 }

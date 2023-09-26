@@ -166,11 +166,24 @@ func TestWire(t *testing.T) {
 }
 
 func goBuildCheck(goToolPath, gopath string, test *testCase) error {
-	// Run `go build`.
+	// Run `go get golang.org/x/sync/errgroup`.
 	testExePath := filepath.Join(gopath, "bin", "testprog")
+	goGetCmd := []string{"get", "golang.org/x/sync/errgroup"}
+	goGetCmd = append(goGetCmd, test.pkg)
+	cmd := exec.Command(goToolPath, goGetCmd...)
+	cmd.Dir = filepath.Join(gopath, "src", "example.com")
+	cmd.Env = append(os.Environ(), "GOPATH="+gopath)
+	if buildOut, err := cmd.CombinedOutput(); err != nil {
+		if len(buildOut) > 0 {
+			return fmt.Errorf("build: %v; output:\n%s", err, buildOut)
+		}
+		return fmt.Errorf("build: %v", err)
+	}
+
+	// Run `go build`.
 	buildCmd := []string{"build", "-o", testExePath}
 	buildCmd = append(buildCmd, test.pkg)
-	cmd := exec.Command(goToolPath, buildCmd...)
+	cmd = exec.Command(goToolPath, buildCmd...)
 	cmd.Dir = filepath.Join(gopath, "src", "example.com")
 	cmd.Env = append(os.Environ(), "GOPATH="+gopath)
 	if buildOut, err := cmd.CombinedOutput(); err != nil {
@@ -463,7 +476,6 @@ type testCase struct {
 //			program_out.txt
 //					expected output from the final compiled program,
 //					missing if wire_errs.txt is present
-//
 func loadTestCase(root string, wireGoSrc []byte) (*testCase, error) {
 	name := filepath.Base(root)
 	pkg, err := ioutil.ReadFile(filepath.Join(root, "pkg"))
@@ -491,7 +503,7 @@ func loadTestCase(root string, wireGoSrc []byte) (*testCase, error) {
 		}
 	}
 	goFiles := map[string][]byte{
-		"github.com/google/wire/wire.go": wireGoSrc,
+		"github.com/deliveroo/wire/wire.go": wireGoSrc,
 	}
 	err = filepath.Walk(root, func(src string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -543,9 +555,9 @@ func (test *testCase) materialize(gopath string) error {
 		}
 	}
 
-	// Add go.mod files to example.com and github.com/google/wire.
+	// Add go.mod files to example.com and github.com/deliveroo/wire.
 	const importPath = "example.com"
-	const depPath = "github.com/google/wire"
+	const depPath = "github.com/deliveroo/wire"
 	depLoc := filepath.Join(gopath, "src", filepath.FromSlash(depPath))
 	example := fmt.Sprintf("module %s\n\nrequire %s v0.1.0\nreplace %s => %s\n", importPath, depPath, depPath, depLoc)
 	gomod := filepath.Join(gopath, "src", filepath.FromSlash(importPath), "go.mod")
