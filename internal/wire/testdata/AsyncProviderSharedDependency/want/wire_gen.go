@@ -67,7 +67,9 @@ func injectFoo(ctx context.Context) int {
 		}
 		return nil
 	})
-	g.Wait()
+	if err := g.Wait(); err != nil {
+		return 0
+	}
 	int2 := <-int2Chan
 	return int2
 }

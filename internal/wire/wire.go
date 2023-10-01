@@ -679,15 +679,16 @@ func injectPass(name string, sig *types.Signature, calls []call, set *ProviderSe
 		lastCallIdx := len(calls) - 1
 		lastCallLocalName := ig.localNames[lastCallIdx]
 		lastCall := calls[lastCallIdx]
-		// todo tidy this up
-		if lastCall.async {
-			if !injectSig.err {
-				ig.p("g.Wait()\n")
-			} else {
-				ig.p("if err := g.Wait(); err != nil {\n")
-				ig.p("\treturn %s, err\n", zeroValue(lastCall.out, ig.g.qualifyPkg))
-				ig.p("}\n")
+		if needsErrgroup {
+			ig.p("if %s := g.Wait(); %s != nil {\n", ig.errVar, ig.errVar)
+			ig.p("\treturn %s", zeroValue(injectSig.out, ig.g.qualifyPkg))
+			if injectSig.err {
+				ig.p(", %s", ig.errVar)
 			}
+			ig.p("\n")
+			ig.p("}\n")
+		}
+		if lastCall.async {
 			ig.p("%s := <- %sChan\n", lastCallLocalName, lastCallLocalName)
 		}
 		ig.p("\treturn %s", lastCallLocalName)
