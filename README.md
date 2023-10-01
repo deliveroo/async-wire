@@ -2,15 +2,18 @@
 
 async-wire extends [google/wire](https://github.com/google/wire) by introducing a new provider type called `wire.AsyncFunc`.
 Functions wrapped by `AsyncFunc` are executed in a Goroutine. To synchronise inputs / outputs between providers, channels are used.
-*async-wire is still experimental and not ready for production use. 
 
 ## Project goals
 
 1. First class support for asynchronous dependency graphs
 2. Compatibility with existing Wire features
-3. .dot file generation (TODO)
 
-## Extended API
+## Roadmap
+
+- [ ] Add missing wire features to async functions: `cleanup`, `variadic args`
+- [ ] dotfile generation (https://github.com/google/wire/issues/42)
+
+## AsyncFunc
 
 ```go
 // wire.go
